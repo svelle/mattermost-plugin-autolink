@@ -67,12 +67,12 @@ type SuiteAuthorization struct {
 
 	api *plugintest.API
 
-	adminUsernames string
-	userInfo       map[string]*model.User
+	managerUsernames string
+	userInfo         map[string]*model.User
 }
 
 func (suite *SuiteAuthorization) SetupTest() {
-	suite.adminUsernames = ""
+	suite.managerUsernames = ""
 	suite.userInfo = make(map[string]*model.User)
 
 	suite.api = &plugintest.API{}
@@ -82,7 +82,7 @@ func (suite *SuiteAuthorization) SetupTest() {
 	).Return(
 		func(dest interface{}) error {
 			*dest.(*Config) = Config{
-				PluginAdmins: suite.adminUsernames,
+				PluginManagers: suite.managerUsernames,
 			}
 			return nil
 		},
@@ -105,11 +105,42 @@ func (suite *SuiteAuthorization) SetupTest() {
 		},
 	)
 	suite.api.On(
+		"GetUserByUsername",
+		mock.AnythingOfType("string"),
+	).Return(
+		func(username string) *model.User {
+			for _, u := range suite.userInfo {
+				if u.Username == username {
+					return u
+				}
+			}
+			return nil
+		},
+		func(username string) *model.AppError {
+			for _, u := range suite.userInfo {
+				if u.Username == username {
+					return nil
+				}
+			}
+			return &model.AppError{
+				Message: fmt.Sprintf("user %s not found", username),
+			}
+		},
+	)
+	suite.api.On(
 		"UnregisterCommand",
 		mock.AnythingOfType("string"),
 		mock.AnythingOfType("string"),
 	).Return(
 		(*model.AppError)(nil),
+	)
+	suite.api.On(
+		"LogWarn",
+		mock.AnythingOfType("string"),
+		mock.AnythingOfType("string"),
+		mock.AnythingOfType("string"),
+		mock.AnythingOfType("string"),
+		mock.AnythingOfType("string"),
 	)
 }
 
@@ -157,7 +188,7 @@ func (suite *SuiteAuthorization) TestAdminUserIsAuthorized() {
 		Id:       "marynaId",
 		Roles:    "smurf,reaper",
 	}
-	suite.adminUsernames = "marynaId"
+	suite.managerUsernames = "maryna"
 
 	suite.api.On("LogInfo", mock.AnythingOfType("string")).Return(nil)
 
@@ -188,7 +219,7 @@ func (suite *SuiteAuthorization) TestMultipleUsersAreAuthorized() {
 		Id:       "karynaId",
 		Roles:    "screamer",
 	}
-	suite.adminUsernames = "marynaId,karynaId"
+	suite.managerUsernames = "maryna,karyna"
 
 	suite.api.On("LogInfo", mock.AnythingOfType("string")).Return(nil)
 
@@ -227,7 +258,7 @@ func (suite *SuiteAuthorization) TestWhitespaceIsIgnored() {
 		Id:       "karynaId",
 		Roles:    "screamer",
 	}
-	suite.adminUsernames = "marynaId , karynaId, borynaId "
+	suite.managerUsernames = "maryna , karyna, boryna "
 
 	suite.api.On("LogInfo", mock.AnythingOfType("string")).Return(nil)
 
@@ -250,20 +281,14 @@ func (suite *SuiteAuthorization) TestWhitespaceIsIgnored() {
 	assert.True(suite.T(), allowed)
 }
 
-func (suite *SuiteAuthorization) TestNonExistantUsersAreIgnored() {
+func (suite *SuiteAuthorization) TestNonExistentManagerUsernameIsIgnored() {
 	suite.userInfo["marynaId"] = &model.User{
 		Username: "maryna",
 		Id:       "marynaId",
 		Roles:    "smurf,reaper",
 	}
-	suite.adminUsernames = "marynaId,karynaId"
+	suite.managerUsernames = "maryna,karyna"
 
-	suite.api.On("LogWarn", mock.AnythingOfType("string"),
-		"userID",
-		"karynaId",
-		"error",
-		mock.AnythingOfType("*model.AppError"),
-	).Return(nil)
 	suite.api.On("LogInfo", mock.AnythingOfType("string")).Return(nil)
 
 	p := New()
@@ -272,13 +297,10 @@ func (suite *SuiteAuthorization) TestNonExistantUsersAreIgnored() {
 	err := p.OnConfigurationChange()
 	require.NoError(suite.T(), err)
 
-	allowed, err := p.IsAuthorizedAdmin("marynaId")
-	require.NoError(suite.T(), err)
+	// maryna should be resolved, karyna should be skipped
+	allowed, err2 := p.IsAuthorizedAdmin("marynaId")
+	require.NoError(suite.T(), err2)
 	assert.True(suite.T(), allowed)
-
-	allowed, err = p.IsAuthorizedAdmin("karynaId")
-	require.Error(suite.T(), err)
-	require.False(suite.T(), allowed)
 }
 
 func TestSuiteAuthorization(t *testing.T) {
@@ -537,7 +559,7 @@ func TestBotMessagesAreRewritenWhenGetUserFails(t *testing.T) {
 		*dest.(*Config) = conf
 		return nil
 	}).Once()
-	api.On("UnregisterCommand", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return((*model.AppError)(nil)).Once()
+	api.On("UnregisterCommand", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return((*model.AppError)(nil))
 
 	api.On("GetChannel", mock.AnythingOfType("string")).Return(&testChannel, nil).Once()
 	api.On("GetTeam", mock.AnythingOfType("string")).Return(&testTeam, nil).Once()
@@ -580,7 +602,7 @@ func TestGetUserApiCallIsNotExecutedWhenThereAreNoChanges(t *testing.T) {
 		*dest.(*Config) = conf
 		return nil
 	}).Once()
-	api.On("UnregisterCommand", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return((*model.AppError)(nil)).Once()
+	api.On("UnregisterCommand", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return((*model.AppError)(nil))
 
 	api.On("GetChannel", mock.AnythingOfType("string")).Return(&testChannel, nil).Once()
 	api.On("GetTeam", mock.AnythingOfType("string")).Return(&testTeam, nil).Once()
@@ -619,7 +641,7 @@ func TestBotMessagesAreNotRewriten(t *testing.T) {
 		*dest.(*Config) = conf
 		return nil
 	}).Once()
-	api.On("UnregisterCommand", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return((*model.AppError)(nil)).Once()
+	api.On("UnregisterCommand", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return((*model.AppError)(nil))
 
 	api.On("GetChannel", mock.AnythingOfType("string")).Return(&testChannel, nil).Once()
 	api.On("GetTeam", mock.AnythingOfType("string")).Return(&testTeam, nil).Once()
@@ -663,7 +685,7 @@ func TestBotMessagesAreRewritenWhenConfigAllows(t *testing.T) {
 		*dest.(*Config) = conf
 		return nil
 	}).Once()
-	api.On("UnregisterCommand", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return((*model.AppError)(nil)).Once()
+	api.On("UnregisterCommand", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return((*model.AppError)(nil))
 
 	api.On("GetChannel", mock.AnythingOfType("string")).Return(&testChannel, nil).Once()
 	api.On("GetTeam", mock.AnythingOfType("string")).Return(&testTeam, nil).Once()
@@ -763,6 +785,7 @@ func TestAPI(t *testing.T) {
 	api.On("GetChannel", mock.AnythingOfType("string")).Return(&testChannel, nil)
 	api.On("GetTeam", mock.AnythingOfType("string")).Return(&testTeam, nil)
 	api.On("SavePluginConfig", mock.AnythingOfType("map[string]interface {}")).Return(nil)
+	api.On("EnsureBotUser", mock.AnythingOfType("*model.Bot")).Return("bot-user-id", nil)
 
 	p := New()
 	p.SetAPI(api)

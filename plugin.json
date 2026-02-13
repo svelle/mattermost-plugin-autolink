@@ -37,12 +37,28 @@
                 "default": false
             },
             {
-                "key": "pluginadmins",
-                "display_name": "Admin User IDs:",
+                "key": "pluginmanagers",
+                "display_name": "Plugin Managers:",
                 "type": "text",
-                "help_text": "Comma-separated list of user IDs authorized to administer the plugin in addition to the System Admins.\n \n User IDs can be found by navigating to **System Console \u003e User Management \u003e Users**.",
-                "placeholder": "",
+                "help_text": "Comma-separated list of usernames who manage autolink requests. These users will always receive DM notifications when new requests are submitted (even if they are the submitter), and are authorized to administer the plugin via slash commands.",
+                "placeholder": "admin, johndoe",
                 "default": null
+            },
+            {
+                "key": "enableusersubmissions",
+                "display_name": "Enable User Submissions:",
+                "type": "bool",
+                "help_text": "Allow non-admin users to submit autolink pattern requests via /autolink-request command. Admins will be notified via DM when new requests are submitted.",
+                "placeholder": "",
+                "default": true
+            },
+            {
+                "key": "maxsubmissionsperuser",
+                "display_name": "Max Submissions Per User:",
+                "type": "number",
+                "help_text": "Maximum number of pending submissions allowed per user (0 = unlimited). This helps prevent spam while allowing legitimate requests.",
+                "placeholder": "0",
+                "default": 0
             }
         ]
     }

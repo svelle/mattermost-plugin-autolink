@@ -83,6 +83,11 @@ func (ch CommandHandler) Handle(p *Plugin, c *plugin.Context, header *model.Comm
 }
 
 func (p *Plugin) ExecuteCommand(c *plugin.Context, commandArgs *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
+	args := strings.Fields(commandArgs.Command)
+	if len(args) > 0 && args[0] == autolinkRequestCommand {
+		return p.ExecuteAutolinkRequestCommand(c, commandArgs)
+	}
+
 	isAdmin, err := p.IsAuthorizedAdmin(commandArgs.UserId)
 	if err != nil {
 		return responsef("error occurred while authorizing the command: %v", err), nil
@@ -91,7 +96,6 @@ func (p *Plugin) ExecuteCommand(c *plugin.Context, commandArgs *model.CommandArg
 		return responsef("`/autolink` commands can only be executed by a system administrator or `autolink` plugin admins."), nil
 	}
 
-	args := strings.Fields(commandArgs.Command)
 	if len(args) == 0 || args[0] != autolinkCommand {
 		return responsef(helpText), nil
 	}

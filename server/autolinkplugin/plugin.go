@@ -23,6 +23,9 @@ type Plugin struct {
 	// configuration and a mutex to control concurrent access
 	conf     *Config
 	confLock sync.RWMutex
+
+	// botUserID is the ID of the bot user for sending notifications
+	botUserID string
 }
 
 func New() *Plugin {
@@ -33,6 +36,19 @@ func New() *Plugin {
 
 func (p *Plugin) OnActivate() error {
 	p.handler = api.NewHandler(p, p)
+
+	// Ensure bot user exists for sending notifications
+	bot := &model.Bot{
+		Username:    "autolink",
+		DisplayName: "Autolink Plugin",
+		Description: "Bot account for Autolink plugin notifications",
+	}
+
+	botUserID, err := p.API.EnsureBotUser(bot)
+	if err != nil {
+		return errors.Wrap(err, "failed to ensure bot account")
+	}
+	p.botUserID = botUserID
 
 	return nil
 }
@@ -49,9 +65,9 @@ func (p *Plugin) IsAuthorizedAdmin(userID string) (bool, error) {
 	}
 
 	conf := p.getConfig()
-	if _, ok := conf.AdminUserIds[userID]; ok {
+	if _, ok := conf.PluginManagerIds[userID]; ok {
 		p.API.LogInfo(
-			fmt.Sprintf("UserID `%s` is authorized basing on the list of plugin admins list", userID))
+			fmt.Sprintf("UserID `%s` is authorized as a plugin manager", userID))
 		return true, nil
 	}
 

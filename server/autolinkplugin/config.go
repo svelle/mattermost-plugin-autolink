@@ -14,16 +14,17 @@ import (
 
 // Config from config.json
 type Config struct {
-	EnableAdminCommand bool                `json:"enableadmincommand"`
-	EnableOnUpdate     bool                `json:"enableonupdate"`
-	PluginAdmins       string              `json:"pluginadmins"`
-	Links              []autolink.Autolink `json:"links"`
+	EnableAdminCommand    bool                `json:"enableadmincommand"`
+	EnableOnUpdate        bool                `json:"enableonupdate"`
+	Links                 []autolink.Autolink `json:"links"`
+	EnableUserSubmissions bool                `json:"enableusersubmissions"`
+	MaxSubmissionsPerUser int                 `json:"maxsubmissionsperuser"`
+	PluginManagers        string              `json:"pluginmanagers"`
 
-	// AdminUserIds is a set of UserIds that are permitted to perform
-	// administrative operations on the plugin configuration (i.e. plugin
-	// admins). On each configuration change the contents of PluginAdmins
-	// config field is parsed into this field.
-	AdminUserIds map[string]struct{} `json:"-"`
+	// PluginManagerIds is a set of UserIds parsed from PluginManagers
+	// (usernames). These users are authorized to administer the plugin and
+	// always receive submission notifications.
+	PluginManagerIds map[string]struct{} `json:"-"`
 }
 
 // OnConfigurationChange is invoked when configuration changes may have been made.
@@ -39,10 +40,7 @@ func (p *Plugin) OnConfigurationChange() error {
 		}
 	}
 
-	// Plugin admin UserId parsing and validation errors are
-	// not fatal, if everything fails only sysadmin will be able to manage the
-	// config which is still OK
-	c.parsePluginAdminList(p.API)
+	c.parsePluginManagerList(p.API)
 
 	p.UpdateConfig(func(conf *Config) {
 		*conf = c
@@ -59,8 +57,24 @@ func (p *Plugin) OnConfigurationChange() error {
 				AutoCompleteHint: "[command]",
 				AutocompleteData: getAutoCompleteData(),
 			})
+
+			// Register user submission command if enabled
+			if c.EnableUserSubmissions {
+				_ = p.API.RegisterCommand(&model.Command{
+					Trigger:          "autolink-request",
+					DisplayName:      "Autolink Request",
+					Description:      "Submit autolink pattern requests for admin review.",
+					AutoComplete:     true,
+					AutoCompleteDesc: "Available commands: submit, list",
+					AutoCompleteHint: "[command]",
+					AutocompleteData: getAutolinkRequestAutoCompleteData(),
+				})
+			} else {
+				_ = p.API.UnregisterCommand("", "autolink-request")
+			}
 		} else {
 			_ = p.API.UnregisterCommand("", "autolink")
+			_ = p.API.UnregisterCommand("", "autolink-request")
 		}
 	}()
 
@@ -223,24 +237,27 @@ func (conf *Config) Sorted() *Config {
 	return conf
 }
 
-// parsePluginAdminList parses the contents of PluginAdmins config field
-func (conf *Config) parsePluginAdminList(api plugin.API) {
-	conf.AdminUserIds = make(map[string]struct{}, len(conf.PluginAdmins))
+// parsePluginManagerList resolves PluginManagers usernames to user IDs.
+// Validation errors are not fatal; invalid usernames are logged and skipped.
+func (conf *Config) parsePluginManagerList(api plugin.API) {
+	conf.PluginManagerIds = make(map[string]struct{})
 
-	if len(conf.PluginAdmins) == 0 {
-		// There were no plugin admin users defined
+	if len(conf.PluginManagers) == 0 {
 		return
 	}
 
-	userIDs := strings.Split(conf.PluginAdmins, ",")
-	for _, userID := range userIDs {
-		userID = strings.TrimSpace(userID)
-		// Let's verify that the given user really exists
-		_, appErr := api.GetUser(userID)
-		if appErr != nil {
-			api.LogWarn("Error occurred while verifying userID", "userID", userID, "error", appErr)
-		} else {
-			conf.AdminUserIds[userID] = struct{}{}
+	usernames := strings.Split(conf.PluginManagers, ",")
+	for _, username := range usernames {
+		username = strings.TrimSpace(username)
+		if username == "" {
+			continue
 		}
+		user, appErr := api.GetUserByUsername(username)
+		if appErr != nil {
+			api.LogWarn("Unable to resolve plugin manager username", "username", username, "error", appErr.Error())
+			continue
+		}
+		conf.PluginManagerIds[user.Id] = struct{}{}
 	}
 }
+
