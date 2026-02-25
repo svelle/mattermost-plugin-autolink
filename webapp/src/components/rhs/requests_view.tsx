@@ -1,9 +1,9 @@
 import React, {useEffect, useState, useCallback} from 'react';
 import {useSelector, useDispatch} from 'react-redux';
 
-import {getSubmissions, getSubmissionsLoading, isAdmin as isAdminSelector} from '../../selectors';
-import {fetchSubmissions, createSubmission, updateSubmission} from '../../actions';
-import {Submission} from '../../types';
+import {getSubmissions, getSubmissionsLoading, isAdmin as isAdminSelector, getTestResult} from '../../selectors';
+import {fetchSubmissions, createSubmission, updateSubmission, testLink} from '../../actions';
+import {Submission, TestResult} from '../../types';
 import Loading from '../common/loading';
 import EmptyState from './empty_state';
 
@@ -60,10 +60,12 @@ function getStatusBadge(status: string, theme: any): {label: string; color: stri
 // Inline new-request form (collapsible)
 const NewRequestForm: React.FC<{theme: any; onDone: () => void}> = ({theme, onDone}) => {
     const dispatch = useDispatch();
+    const testResult = useSelector(getTestResult);
     const [description, setDescription] = useState('');
     const [pattern, setPattern] = useState('');
     const [template, setTemplate] = useState('');
     const [showOptional, setShowOptional] = useState(false);
+    const [sampleText, setSampleText] = useState('');
 
     const borderColor = theme?.centerChannelColor ? `${theme.centerChannelColor}20` : '#ddd';
     const activeColor = theme?.buttonBg || '#166DE0';
@@ -92,9 +94,16 @@ const NewRequestForm: React.FC<{theme: any; onDone: () => void}> = ({theme, onDo
             setPattern('');
             setTemplate('');
             setShowOptional(false);
+            setSampleText('');
             onDone();
         }
     }, [dispatch, description, pattern, template, onDone]);
+
+    const handleTest = useCallback(() => {
+        if (pattern && sampleText) {
+            dispatch(testLink(pattern, template, sampleText, false) as any);
+        }
+    }, [dispatch, pattern, template, sampleText]);
 
     return (
         <div style={{padding: '12px', borderBottom: `1px solid ${borderColor}`}}>
@@ -154,6 +163,72 @@ const NewRequestForm: React.FC<{theme: any; onDone: () => void}> = ({theme, onDo
                             style={{...inputStyle, fontFamily: 'monospace'}}
                         />
                     </div>
+
+                    {/* Inline pattern tester */}
+                    {pattern.trim() && (
+                        <div style={{
+                            marginBottom: '12px',
+                            padding: '10px',
+                            border: `1px solid ${borderColor}`,
+                            borderRadius: '4px',
+                            backgroundColor: theme?.centerChannelColor ? `${theme.centerChannelColor}04` : '#fafafa',
+                        }}>
+                            <label style={{display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px'}}>
+                                {'Test your pattern'}
+                            </label>
+                            <div style={{display: 'flex', gap: '6px', marginBottom: '6px'}}>
+                                <input
+                                    type="text"
+                                    value={sampleText}
+                                    onChange={(e) => setSampleText(e.target.value)}
+                                    placeholder="Enter sample text..."
+                                    style={{...inputStyle, flex: 1}}
+                                />
+                                <button
+                                    onClick={handleTest}
+                                    disabled={!sampleText.trim()}
+                                    style={{
+                                        padding: '4px 12px',
+                                        backgroundColor: sampleText.trim() ? activeColor : `${activeColor}50`,
+                                        color: theme?.buttonColor || '#fff',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: sampleText.trim() ? 'pointer' : 'default',
+                                        fontSize: '12px',
+                                        fontWeight: 600,
+                                        whiteSpace: 'nowrap',
+                                    }}
+                                >
+                                    {'Test'}
+                                </button>
+                            </div>
+                            {testResult && (
+                                <div style={{
+                                    fontSize: '12px',
+                                    padding: '6px 8px',
+                                    borderRadius: '3px',
+                                    backgroundColor: theme?.centerChannelColor ? `${theme.centerChannelColor}08` : '#f5f5f5',
+                                }}>
+                                    {testResult.error ? (
+                                        <div style={{color: theme?.errorTextColor || '#D24B4E'}}>
+                                            {testResult.error}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div style={{marginBottom: '2px'}}>
+                                                <span style={{fontWeight: 500}}>{'In: '}</span>
+                                                <code style={{fontSize: '11px'}}>{testResult.input}</code>
+                                            </div>
+                                            <div>
+                                                <span style={{fontWeight: 500}}>{'Out: '}</span>
+                                                <code style={{fontSize: '11px'}}>{testResult.output}</code>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </>
             )}
 

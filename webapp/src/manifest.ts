@@ -8,7 +8,7 @@ const manifest = JSON.parse(`
     "homepage_url": "https://github.com/mattermost-community/mattermost-plugin-autolink",
     "support_url": "https://github.com/mattermost-community/mattermost-plugin-autolink/issues",
     "icon_path": "assets/icon.svg",
-    "version": "0.0.0+b07bd61",
+    "version": "0.0.0+448c8d4",
     "min_server_version": "5.16.0",
     "server": {
         "executables": {

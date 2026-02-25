@@ -62,7 +62,6 @@ func NewHandler(store Store, authorization Authorization, submissionStore Submis
 	adminAPI.HandleFunc("/link", h.setLink).Methods("POST")
 	adminAPI.HandleFunc("/links", h.getLinks).Methods("GET")
 	adminAPI.HandleFunc("/link", h.deleteLink).Methods("DELETE")
-	adminAPI.HandleFunc("/link/test", h.testLink).Methods("POST")
 	adminAPI.HandleFunc("/submissions/{id}", h.updateSubmission).Methods("PUT")
 
 	// User routes (any authenticated user)
@@ -71,6 +70,7 @@ func NewHandler(store Store, authorization Authorization, submissionStore Submis
 	userAPI.HandleFunc("/user/role", h.getUserRole).Methods("GET")
 	userAPI.HandleFunc("/submissions", h.getSubmissions).Methods("GET")
 	userAPI.HandleFunc("/submissions", h.createSubmission).Methods("POST")
+	userAPI.HandleFunc("/link/test", h.testLink).Methods("POST")
 
 	root.Handle("{anything:.*}", http.NotFoundHandler())
 
