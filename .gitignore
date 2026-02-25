@@ -1,2 +1,4 @@
 dist
 server/manifest.go
+webapp/node_modules/
+webapp/dist/
