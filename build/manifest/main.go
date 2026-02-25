@@ -38,6 +38,8 @@ const manifest = JSON.parse(` + "`" + `
 %s
 ` + "`" + `);
 
+export const PLUGIN_ID = manifest.id;
+
 export default manifest;
 `
 
