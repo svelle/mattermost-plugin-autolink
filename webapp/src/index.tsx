@@ -7,4 +7,4 @@ declare global {
     }
 }
 
-window.registerPlugin(manifest.PLUGIN_ID, new Plugin());
+window.registerPlugin(manifest.id, new Plugin());
