@@ -80,16 +80,8 @@ func NewHandler(store Store, authorization Authorization, submissionStore Submis
 }
 
 func (h *Handler) handleError(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusInternalServerError)
-	b, _ := json.Marshal(struct {
-		Error   string `json:"error"`
-		Details string `json:"details"`
-	}{
-		Error:   "An internal error has occurred. Check app server logs for details.",
-		Details: err.Error(),
-	})
-	_, _ = w.Write(b)
+	h.handleErrorWithStatus(w, http.StatusInternalServerError,
+		"An internal error has occurred. Check app server logs for details.")
 }
 
 func (h *Handler) handleErrorWithStatus(w http.ResponseWriter, statusCode int, message string) {
@@ -490,6 +482,70 @@ type importLinksResponse struct {
 	Total    int `json:"total"`
 }
 
+// extractLinksFromJSON tries to find an autolink array from JSON input.
+// Supports: a raw array, an object with a "links" key, or a full
+// Mattermost config.json with PluginSettings.Plugins.<id>.links.
+func extractLinksFromJSON(raw json.RawMessage) ([]autolink.Autolink, error) {
+	// Try as a raw array of links.
+	var links []autolink.Autolink
+	if err := json.Unmarshal(raw, &links); err == nil {
+		return links, nil
+	}
+
+	// Try as an object — look for a top-level "links" key.
+	var wrapper map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		return nil, fmt.Errorf("JSON must be an array of links or an object with a \"links\" key")
+	}
+
+	if linksRaw, ok := wrapper["links"]; ok {
+		if err := json.Unmarshal(linksRaw, &links); err != nil {
+			return nil, fmt.Errorf("unable to parse links array: %v", err)
+		}
+		return links, nil
+	}
+
+	// Try nested: PluginSettings.Plugins.<any plugin>.links
+	linksRaw, ok := findNestedLinks(wrapper)
+	if !ok {
+		return nil, fmt.Errorf("no \"links\" array found in the JSON")
+	}
+	if err := json.Unmarshal(linksRaw, &links); err != nil {
+		return nil, fmt.Errorf("unable to parse links array: %v", err)
+	}
+	return links, nil
+}
+
+// findNestedLinks searches for a "links" key inside PluginSettings.Plugins.<id>.
+func findNestedLinks(wrapper map[string]json.RawMessage) (json.RawMessage, bool) {
+	ps, found := wrapper["PluginSettings"]
+	if !found {
+		return nil, false
+	}
+	var psMap map[string]json.RawMessage
+	if err := json.Unmarshal(ps, &psMap); err != nil {
+		return nil, false
+	}
+	plugins, found := psMap["Plugins"]
+	if !found {
+		return nil, false
+	}
+	var pluginsMap map[string]json.RawMessage
+	if err := json.Unmarshal(plugins, &pluginsMap); err != nil {
+		return nil, false
+	}
+	for _, pluginConf := range pluginsMap {
+		var confMap map[string]json.RawMessage
+		if err := json.Unmarshal(pluginConf, &confMap); err != nil {
+			continue
+		}
+		if lr, ok := confMap["links"]; ok {
+			return lr, true
+		}
+	}
+	return nil, false
+}
+
 func (h *Handler) importLinks(w http.ResponseWriter, r *http.Request) {
 	var raw json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
@@ -497,58 +553,10 @@ func (h *Handler) importLinks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to extract links from the JSON. Supports:
-	// 1. A raw array of link objects: [...]
-	// 2. A config object with a "links" key: {"links": [...], ...}
-	// 3. A full Mattermost config with PluginSettings.Plugins.<id>.links
-	var imported []autolink.Autolink
-
-	// First, try as a raw array
-	if err := json.Unmarshal(raw, &imported); err != nil {
-		// Try as an object with a "links" key
-		var wrapper map[string]json.RawMessage
-		if err2 := json.Unmarshal(raw, &wrapper); err2 != nil {
-			h.handleErrorWithStatus(w, http.StatusBadRequest,
-				"JSON must be an array of links or an object with a \"links\" key")
-			return
-		}
-
-		linksRaw, ok := wrapper["links"]
-		if !ok {
-			// Try nested under PluginSettings.Plugins.<pluginId>
-			if ps, found := wrapper["PluginSettings"]; found {
-				var psMap map[string]json.RawMessage
-				if err3 := json.Unmarshal(ps, &psMap); err3 == nil {
-					if plugins, found2 := psMap["Plugins"]; found2 {
-						var pluginsMap map[string]json.RawMessage
-						if err4 := json.Unmarshal(plugins, &pluginsMap); err4 == nil {
-							for _, pluginConf := range pluginsMap {
-								var confMap map[string]json.RawMessage
-								if err5 := json.Unmarshal(pluginConf, &confMap); err5 == nil {
-									if lr, f := confMap["links"]; f {
-										linksRaw = lr
-										ok = true
-										break
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
-		if !ok {
-			h.handleErrorWithStatus(w, http.StatusBadRequest,
-				"no \"links\" array found in the JSON")
-			return
-		}
-
-		if err3 := json.Unmarshal(linksRaw, &imported); err3 != nil {
-			h.handleErrorWithStatus(w, http.StatusBadRequest,
-				"unable to parse links array: "+err3.Error())
-			return
-		}
+	imported, err := extractLinksFromJSON(raw)
+	if err != nil {
+		h.handleErrorWithStatus(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	if len(imported) == 0 {
@@ -570,8 +578,14 @@ func (h *Handler) importLinks(w http.ResponseWriter, r *http.Request) {
 
 	added := 0
 	skipped := 0
-	for _, link := range imported {
+	for i := range imported {
+		link := &imported[i]
 		if link.Pattern == "" {
+			skipped++
+			continue
+		}
+		// Validate the pattern compiles as valid regex
+		if err := link.Compile(); err != nil {
 			skipped++
 			continue
 		}
@@ -579,7 +593,7 @@ func (h *Handler) importLinks(w http.ResponseWriter, r *http.Request) {
 			skipped++
 			continue
 		}
-		existing = append(existing, link)
+		existing = append(existing, *link)
 		if link.Name != "" {
 			existingSet[link.Name] = true
 		}

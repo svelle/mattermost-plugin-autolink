@@ -39,7 +39,7 @@ export default class Plugin {
         registry.registerReducer(reducer);
 
         const {toggleRHSPlugin} = registry.registerRightHandSidebarComponent(
-            (props: any) => <RHSView {...props} store={store}/>,
+            (props: any) => <RHSView {...props}/>,
             'Autolink',
         );
 

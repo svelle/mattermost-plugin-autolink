@@ -1,5 +1,6 @@
 import {PLUGIN_ID} from './manifest';
 import {PluginState, Autolink, Submission, UserRole, TestResult} from './types';
+import {TAB_REQUESTS} from './constants';
 
 // The plugin state is stored under the key `plugins-{pluginId}` in the Redux store.
 const getPluginState = (state: any): PluginState => {
@@ -11,7 +12,7 @@ export const getLinksLoading = (state: any): boolean => getPluginState(state).li
 export const getSubmissions = (state: any): Submission[] => getPluginState(state).submissions || [];
 export const getSubmissionsLoading = (state: any): boolean => getPluginState(state).submissionsLoading || false;
 export const getUserRole = (state: any): UserRole | null => getPluginState(state).userRole || null;
-export const getActiveTab = (state: any): string => getPluginState(state).activeTab || 'submit';
+export const getActiveTab = (state: any): string => getPluginState(state).activeTab || TAB_REQUESTS;
 export const getEditingLink = (state: any): Autolink | null => getPluginState(state).editingLink || null;
 export const getTestResult = (state: any): TestResult | null => getPluginState(state).testResult || null;
 export const getError = (state: any): string | null => getPluginState(state).error || null;

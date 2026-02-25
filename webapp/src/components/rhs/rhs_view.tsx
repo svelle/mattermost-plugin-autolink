@@ -17,7 +17,6 @@ import RequestsView from './requests_view';
 
 interface Props {
     theme: any;
-    store?: any;
 }
 
 const RHSView: React.FC<Props> = ({theme}) => {
