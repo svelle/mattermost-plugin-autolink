@@ -3,35 +3,11 @@ package autolinkplugin
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
-	"time"
-)
 
-var (
-	patternRegex  = regexp.MustCompile(`(?i)pattern:\s*([^\n]+)`)
-	templateRegex = regexp.MustCompile(`(?i)template:\s*([^\n]+)`)
+	"github.com/mattermost-community/mattermost-plugin-autolink/server/autolink"
 )
-
-// Submission represents a user-submitted autolink request
-type Submission struct {
-	ID          string `json:"id"`           // Format: {timestamp}_{userID}
-	UserID      string `json:"user_id"`      // Mattermost user ID
-	Username    string `json:"username"`     // Cached for display
-	SubmittedAt int64  `json:"submitted_at"` // Unix timestamp
-	Description string `json:"description"`  // Free-text or structured description
-	Pattern     string `json:"pattern"`      // Optional regex pattern
-	Template    string `json:"template"`     // Optional template
-	Status      string `json:"status"`       // "pending", "implemented", "rejected"
-	StatusNote  string `json:"status_note"`  // Admin notes on the status
-}
 
 const (
-	// Submission status constants
-	SubmissionStatusPending     = "pending"
-	SubmissionStatusImplemented = "implemented"
-	SubmissionStatusRejected    = "rejected"
-
 	// KV store key prefixes
 	kvSubmissionPrefix    = "submission_"
 	kvSubmissionIndexUser = "submission_index_user_"
@@ -39,7 +15,7 @@ const (
 )
 
 // saveSubmissionRecord writes a submission to the KV store without updating indexes.
-func (p *Plugin) saveSubmissionRecord(submission *Submission) error {
+func (p *Plugin) saveSubmissionRecord(submission *autolink.Submission) error {
 	data, err := json.Marshal(submission)
 	if err != nil {
 		return fmt.Errorf("failed to marshal submission: %w", err)
@@ -54,7 +30,7 @@ func (p *Plugin) saveSubmissionRecord(submission *Submission) error {
 }
 
 // saveSubmission saves a submission to the KV store and updates indexes.
-func (p *Plugin) saveSubmission(submission *Submission) error {
+func (p *Plugin) saveSubmission(submission *autolink.Submission) error {
 	if err := p.saveSubmissionRecord(submission); err != nil {
 		return err
 	}
@@ -72,6 +48,11 @@ func (p *Plugin) saveSubmission(submission *Submission) error {
 	}
 
 	return nil
+}
+
+// SaveNewSubmission is the public version of saveSubmission for the API layer.
+func (p *Plugin) SaveNewSubmission(submission *autolink.Submission) error {
+	return p.saveSubmission(submission)
 }
 
 // addToSubmissionIndex atomically adds a key to an index array in the KV store
@@ -116,27 +97,26 @@ func (p *Plugin) addToSubmissionIndex(indexKey, submissionKey string) error {
 	return fmt.Errorf("failed to update index %q after %d retries", indexKey, maxRetries)
 }
 
-// getUserSubmissions retrieves all submissions for a specific user
-func (p *Plugin) getUserSubmissions(userID string) ([]*Submission, error) {
+// GetUserSubmissions retrieves all submissions for a specific user.
+func (p *Plugin) GetUserSubmissions(userID string) ([]*autolink.Submission, error) {
 	indexKey := kvSubmissionIndexUser + userID
 	return p.getSubmissionsByIndex(indexKey)
 }
 
-// getAllSubmissions retrieves all submissions (for admin view)
-func (p *Plugin) getAllSubmissions() ([]*Submission, error) {
+// GetAllSubmissions retrieves all submissions (for admin view).
+func (p *Plugin) GetAllSubmissions() ([]*autolink.Submission, error) {
 	return p.getSubmissionsByIndex(kvSubmissionIndexAll)
 }
 
-// getSubmissionsByIndex retrieves submissions using an index key
-func (p *Plugin) getSubmissionsByIndex(indexKey string) ([]*Submission, error) {
-	// Load index
+// getSubmissionsByIndex retrieves submissions using an index key.
+func (p *Plugin) getSubmissionsByIndex(indexKey string) ([]*autolink.Submission, error) {
 	data, appErr := p.API.KVGet(indexKey)
 	if appErr != nil {
 		return nil, fmt.Errorf("failed to get index: %w", appErr)
 	}
 
 	if data == nil {
-		return []*Submission{}, nil
+		return []*autolink.Submission{}, nil
 	}
 
 	var keys []string
@@ -144,8 +124,7 @@ func (p *Plugin) getSubmissionsByIndex(indexKey string) ([]*Submission, error) {
 		return nil, fmt.Errorf("failed to unmarshal index: %w", err)
 	}
 
-	// Load each submission
-	submissions := make([]*Submission, 0, len(keys))
+	submissions := make([]*autolink.Submission, 0, len(keys))
 	for _, key := range keys {
 		submissionData, appErr := p.API.KVGet(key)
 		if appErr != nil {
@@ -157,7 +136,7 @@ func (p *Plugin) getSubmissionsByIndex(indexKey string) ([]*Submission, error) {
 			continue
 		}
 
-		var submission Submission
+		var submission autolink.Submission
 		if err := json.Unmarshal(submissionData, &submission); err != nil {
 			p.API.LogWarn("Failed to unmarshal submission", "key", key, "error", err)
 			continue
@@ -169,8 +148,8 @@ func (p *Plugin) getSubmissionsByIndex(indexKey string) ([]*Submission, error) {
 	return submissions, nil
 }
 
-// getSubmission retrieves a single submission by ID
-func (p *Plugin) getSubmission(id string) (*Submission, error) {
+// GetSubmission retrieves a single submission by ID.
+func (p *Plugin) GetSubmission(id string) (*autolink.Submission, error) {
 	key := fmt.Sprintf("%s%s", kvSubmissionPrefix, id)
 	data, appErr := p.API.KVGet(key)
 	if appErr != nil {
@@ -181,7 +160,7 @@ func (p *Plugin) getSubmission(id string) (*Submission, error) {
 		return nil, fmt.Errorf("submission not found")
 	}
 
-	var submission Submission
+	var submission autolink.Submission
 	if err := json.Unmarshal(data, &submission); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal submission: %w", err)
 	}
@@ -189,25 +168,23 @@ func (p *Plugin) getSubmission(id string) (*Submission, error) {
 	return &submission, nil
 }
 
-// updateSubmissionStatus updates the status of an already-fetched submission
-// and writes it back without redundant index updates.
-func (p *Plugin) updateSubmissionStatus(submission *Submission, status, statusNote string) error {
+// UpdateSubmissionStatus updates the status of an already-fetched submission.
+func (p *Plugin) UpdateSubmissionStatus(submission *autolink.Submission, status, statusNote string) error {
 	submission.Status = status
 	submission.StatusNote = statusNote
 	return p.saveSubmissionRecord(submission)
 }
 
-// countPendingSubmissions counts the number of pending submissions for a user.
-// When limit > 0, it short-circuits once the count reaches the limit.
-func (p *Plugin) countPendingSubmissions(userID string, limit int) (int, error) {
-	submissions, err := p.getUserSubmissions(userID)
+// CountPendingSubmissions counts the number of pending submissions for a user.
+func (p *Plugin) CountPendingSubmissions(userID string, limit int) (int, error) {
+	submissions, err := p.GetUserSubmissions(userID)
 	if err != nil {
 		return 0, err
 	}
 
 	count := 0
 	for _, s := range submissions {
-		if s.Status == SubmissionStatusPending {
+		if s.Status == autolink.SubmissionStatusPending {
 			count++
 			if limit > 0 && count >= limit {
 				return count, nil
@@ -218,21 +195,26 @@ func (p *Plugin) countPendingSubmissions(userID string, limit int) (int, error) 
 	return count, nil
 }
 
-// parsePatternTemplate extracts pattern and template from description text.
-// Looks for lines like "Pattern: <pattern>" and "Template: <template>"
-func parsePatternTemplate(description string) (pattern, template string) {
-	if matches := patternRegex.FindStringSubmatch(description); len(matches) > 1 {
-		pattern = strings.TrimSpace(matches[1])
-	}
-
-	if matches := templateRegex.FindStringSubmatch(description); len(matches) > 1 {
-		template = strings.TrimSpace(matches[1])
-	}
-
-	return pattern, template
+// IsSubmissionsEnabled returns whether user submissions are enabled.
+func (p *Plugin) IsSubmissionsEnabled() bool {
+	return p.getConfig().EnableUserSubmissions
 }
 
-// createSubmissionID generates a unique submission ID
-func createSubmissionID(userID string) string {
-	return fmt.Sprintf("%d_%s", time.Now().Unix(), userID)
+// GetMaxSubmissionsPerUser returns the max pending submissions per user.
+func (p *Plugin) GetMaxSubmissionsPerUser() int {
+	return p.getConfig().MaxSubmissionsPerUser
+}
+
+// NotifySubmission sends notification DMs for a new submission.
+func (p *Plugin) NotifySubmission(submission *autolink.Submission) {
+	p.notifyOfSubmission(submission)
+}
+
+// GetUserInfo returns the username for a user ID.
+func (p *Plugin) GetUserInfo(userID string) (string, error) {
+	user, appErr := p.API.GetUser(userID)
+	if appErr != nil {
+		return "", fmt.Errorf("failed to get user: %w", appErr)
+	}
+	return user.Username, nil
 }

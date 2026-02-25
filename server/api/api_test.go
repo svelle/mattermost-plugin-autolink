@@ -145,6 +145,7 @@ func TestSetLink(t *testing.T) {
 					saved:      &saved,
 				},
 				authorizeAll{},
+				nil,
 			)
 
 			body, err := json.Marshal(tc.link)

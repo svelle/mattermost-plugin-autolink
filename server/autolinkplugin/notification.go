@@ -5,19 +5,18 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
+
+	"github.com/mattermost-community/mattermost-plugin-autolink/server/autolink"
 )
 
 // notifyOfSubmission sends a DM notification when a new submission is created.
-// If plugin managers are configured, they are always notified (even if they are
-// the submitter). Otherwise all admins are notified, skipping the submitter.
-func (p *Plugin) notifyOfSubmission(submission *Submission) {
+func (p *Plugin) notifyOfSubmission(submission *autolink.Submission) {
 	conf := p.getConfig()
 
 	var recipients []string
 	skipSubmitter := true
 
 	if len(conf.PluginManagerIds) > 0 {
-		// Explicit plugin managers — always notify, no submitter skip
 		recipients = make([]string, 0, len(conf.PluginManagerIds))
 		for userID := range conf.PluginManagerIds {
 			recipients = append(recipients, userID)
@@ -26,7 +25,6 @@ func (p *Plugin) notifyOfSubmission(submission *Submission) {
 		p.API.LogDebug("Notification: using plugin managers list",
 			"count", len(recipients))
 	} else {
-		// Fall back to all admins
 		recipients = p.getAllAdminUserIDs()
 		p.API.LogDebug("Notification: using admin list",
 			"count", len(recipients))
@@ -67,11 +65,9 @@ func (p *Plugin) notifyOfSubmission(submission *Submission) {
 		"submissionID", submission.ID)
 }
 
-// getAllAdminUserIDs returns a list of all admin user IDs (system admins + plugin admins)
 func (p *Plugin) getAllAdminUserIDs() []string {
 	adminSet := make(map[string]struct{})
 
-	// Fetch system admins via paginated API call, filtering out bots
 	sysAdminCount := 0
 	page := 0
 	const perPage = 100
@@ -116,15 +112,12 @@ func (p *Plugin) getAllAdminUserIDs() []string {
 	return adminUserIDs
 }
 
-// sendDMToUser sends a direct message from the bot to a specific user
 func (p *Plugin) sendDMToUser(userID, message string) error {
-	// Get or create DM channel between bot and user
 	channel, appErr := p.API.GetDirectChannel(userID, p.botUserID)
 	if appErr != nil {
 		return fmt.Errorf("failed to get direct channel: %w", appErr)
 	}
 
-	// Create the post
 	post := &model.Post{
 		UserId:    p.botUserID,
 		ChannelId: channel.Id,
@@ -138,9 +131,8 @@ func (p *Plugin) sendDMToUser(userID, message string) error {
 	return nil
 }
 
-// buildSubmissionNotificationMessage builds the notification message for a new submission
-func (p *Plugin) buildSubmissionNotificationMessage(submission *Submission) string {
-	message := "#### 📬 New Autolink Request\n\n"
+func (p *Plugin) buildSubmissionNotificationMessage(submission *autolink.Submission) string {
+	message := "#### New Autolink Request\n\n"
 	message += fmt.Sprintf("**User:** @%s\n", submission.Username)
 	message += fmt.Sprintf("**Submitted:** %s\n", time.Unix(submission.SubmittedAt, 0).Format("2006-01-02 15:04 MST"))
 	message += fmt.Sprintf("**ID:** `%s`\n\n", submission.ID)
@@ -155,8 +147,8 @@ func (p *Plugin) buildSubmissionNotificationMessage(submission *Submission) stri
 
 	message += "\n---\n"
 	message += "**Actions:**\n"
-	message += fmt.Sprintf("* View all: `/autolink-request admin list`\n")
-	message += fmt.Sprintf("* View pending: `/autolink-request admin list pending`\n")
+	message += "* View all: `/autolink-request admin list`\n"
+	message += "* View pending: `/autolink-request admin list pending`\n"
 	message += fmt.Sprintf("* Update status: `/autolink-request admin update %s <status> [note]`\n", submission.ID)
 
 	return message

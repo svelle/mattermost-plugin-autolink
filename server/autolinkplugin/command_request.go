@@ -8,6 +8,8 @@ import (
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+
+	"github.com/mattermost-community/mattermost-plugin-autolink/server/autolink"
 )
 
 const (
@@ -50,7 +52,6 @@ var autolinkRequestAdminCommandHandler = CommandHandler{
 }
 
 func (p *Plugin) ExecuteAutolinkRequestCommand(c *plugin.Context, commandArgs *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
-	// Check if feature is enabled
 	conf := p.getConfig()
 	if !conf.EnableUserSubmissions {
 		return responsef("User submissions are not enabled. Please contact your system administrator."), nil
@@ -61,7 +62,6 @@ func (p *Plugin) ExecuteAutolinkRequestCommand(c *plugin.Context, commandArgs *m
 		return responsef(requestHelpText), nil
 	}
 
-	// Check if this is an admin subcommand
 	if len(args) > 1 && args[1] == "admin" {
 		isAdmin, err := p.IsAuthorizedAdmin(commandArgs.UserId)
 		if err != nil {
@@ -71,14 +71,12 @@ func (p *Plugin) ExecuteAutolinkRequestCommand(c *plugin.Context, commandArgs *m
 			return responsef("`/autolink-request admin` commands can only be executed by a system administrator or `autolink` plugin admins."), nil
 		}
 
-		// Handle admin commands
 		if len(args) == 2 {
 			return executeRequestHelp(p, c, commandArgs), nil
 		}
 		return autolinkRequestAdminCommandHandler.Handle(p, c, commandArgs, args[2:]...), nil
 	}
 
-	// Handle user commands (no authorization check)
 	if len(args) == 1 {
 		return executeRequestHelp(p, c, commandArgs), nil
 	}
@@ -88,7 +86,6 @@ func (p *Plugin) ExecuteAutolinkRequestCommand(c *plugin.Context, commandArgs *m
 func executeRequestSubmit(p *Plugin, _ *plugin.Context, header *model.CommandArgs, args ...string) *model.CommandResponse {
 	conf := p.getConfig()
 
-	// Extract description from command (everything after "submit")
 	cmdPrefix := autolinkRequestCommand + " submit"
 	if !strings.HasPrefix(header.Command, cmdPrefix) {
 		return responsef("Please provide a description for your autolink request.\n\nExample: `/autolink-request submit Replace MM-1234 with Jira link`")
@@ -99,9 +96,8 @@ func executeRequestSubmit(p *Plugin, _ *plugin.Context, header *model.CommandArg
 		return responsef("Please provide a description for your autolink request.\n\nExample: `/autolink-request submit Replace MM-1234 with Jira link`")
 	}
 
-	// Check submission limit
 	if conf.MaxSubmissionsPerUser > 0 {
-		count, err := p.countPendingSubmissions(header.UserId, conf.MaxSubmissionsPerUser)
+		count, err := p.CountPendingSubmissions(header.UserId, conf.MaxSubmissionsPerUser)
 		if err != nil {
 			p.API.LogError("Failed to count pending submissions", "error", err)
 			return responsef("Error checking submission limits. Please try again.")
@@ -111,43 +107,37 @@ func executeRequestSubmit(p *Plugin, _ *plugin.Context, header *model.CommandArg
 		}
 	}
 
-	// Parse optional Pattern/Template from description
-	pattern, template := parsePatternTemplate(description)
+	pattern, template := autolink.ParsePatternTemplate(description)
 
-	// Get user info for caching username
 	user, appErr := p.API.GetUser(header.UserId)
 	if appErr != nil {
 		p.API.LogError("Failed to get user", "error", appErr)
 		return responsef("Error retrieving user information. Please try again.")
 	}
 
-	// Create submission
-	submission := &Submission{
-		ID:          createSubmissionID(header.UserId),
+	submission := &autolink.Submission{
+		ID:          autolink.CreateSubmissionID(header.UserId),
 		UserID:      header.UserId,
 		Username:    user.Username,
 		SubmittedAt: time.Now().Unix(),
 		Description: description,
 		Pattern:     pattern,
 		Template:    template,
-		Status:      SubmissionStatusPending,
+		Status:      autolink.SubmissionStatusPending,
 	}
 
-	// Save to KV store
 	if err := p.saveSubmission(submission); err != nil {
 		p.API.LogError("Failed to save submission", "error", err)
 		return responsef("Error saving your request. Please try again.")
 	}
 
-	// Notify admins
 	go p.notifyOfSubmission(submission)
 
-	return responsef("✅ Request submitted successfully!\n\n**ID:** `%s`\n**Description:** %s\n\nAdmins have been notified and will review your request.", submission.ID, description)
+	return responsef("Request submitted successfully!\n\n**ID:** `%s`\n**Description:** %s\n\nAdmins have been notified and will review your request.", submission.ID, description)
 }
 
 func executeRequestList(p *Plugin, _ *plugin.Context, header *model.CommandArgs, args ...string) *model.CommandResponse {
-	// Get user's submissions
-	submissions, err := p.getUserSubmissions(header.UserId)
+	submissions, err := p.GetUserSubmissions(header.UserId)
 	if err != nil {
 		p.API.LogError("Failed to get user submissions", "error", err)
 		return responsef("Error retrieving your submissions. Please try again.")
@@ -157,12 +147,10 @@ func executeRequestList(p *Plugin, _ *plugin.Context, header *model.CommandArgs,
 		return responsef("You have no submitted requests.\n\nSubmit a request with: `/autolink-request submit <description>`")
 	}
 
-	// Sort by submission time (newest first)
 	sort.Slice(submissions, func(i, j int) bool {
 		return submissions[i].SubmittedAt > submissions[j].SubmittedAt
 	})
 
-	// Format output
 	text := fmt.Sprintf("#### Your Autolink Requests (%d total)\n\n", len(submissions))
 	for _, s := range submissions {
 		text += formatSubmission(s, false)
@@ -172,25 +160,22 @@ func executeRequestList(p *Plugin, _ *plugin.Context, header *model.CommandArgs,
 }
 
 func executeRequestAdminList(p *Plugin, _ *plugin.Context, header *model.CommandArgs, args ...string) *model.CommandResponse {
-	// Parse optional status filter
 	statusFilter := ""
 	if len(args) > 0 {
 		statusFilter = strings.ToLower(args[0])
-		if statusFilter != SubmissionStatusPending && statusFilter != SubmissionStatusImplemented && statusFilter != SubmissionStatusRejected {
+		if statusFilter != autolink.SubmissionStatusPending && statusFilter != autolink.SubmissionStatusImplemented && statusFilter != autolink.SubmissionStatusRejected {
 			return responsef("Invalid status filter. Use: `pending`, `implemented`, or `rejected`")
 		}
 	}
 
-	// Get all submissions
-	submissions, err := p.getAllSubmissions()
+	submissions, err := p.GetAllSubmissions()
 	if err != nil {
 		p.API.LogError("Failed to get submissions", "error", err)
 		return responsef("Error retrieving submissions. Please try again.")
 	}
 
-	// Filter by status if specified
 	if statusFilter != "" {
-		filtered := make([]*Submission, 0)
+		filtered := make([]*autolink.Submission, 0)
 		for _, s := range submissions {
 			if s.Status == statusFilter {
 				filtered = append(filtered, s)
@@ -206,12 +191,10 @@ func executeRequestAdminList(p *Plugin, _ *plugin.Context, header *model.Command
 		return responsef("No submissions yet.")
 	}
 
-	// Sort by submission time (newest first)
 	sort.Slice(submissions, func(i, j int) bool {
 		return submissions[i].SubmittedAt > submissions[j].SubmittedAt
 	})
 
-	// Format output
 	filterText := ""
 	if statusFilter != "" {
 		filterText = fmt.Sprintf(" (status: %s)", statusFilter)
@@ -232,33 +215,28 @@ func executeRequestAdminUpdate(p *Plugin, _ *plugin.Context, header *model.Comma
 	submissionID := args[0]
 	status := strings.ToLower(args[1])
 
-	// Validate status
-	if status != SubmissionStatusPending && status != SubmissionStatusImplemented && status != SubmissionStatusRejected {
+	if status != autolink.SubmissionStatusPending && status != autolink.SubmissionStatusImplemented && status != autolink.SubmissionStatusRejected {
 		return responsef("Invalid status. Must be: `pending`, `implemented`, or `rejected`")
 	}
 
-	// Extract optional note (everything after status)
 	cmdPrefix := fmt.Sprintf("%s admin update %s %s", autolinkRequestCommand, submissionID, args[1])
 	statusNote := ""
 	if strings.HasPrefix(header.Command, cmdPrefix) {
 		statusNote = strings.TrimSpace(header.Command[len(cmdPrefix):])
 	}
 
-	// Get existing submission
-	submission, err := p.getSubmission(submissionID)
+	submission, err := p.GetSubmission(submissionID)
 	if err != nil {
 		return responsef("Submission `%s` not found.", submissionID)
 	}
 
-	// Update status (uses the already-fetched submission to avoid a second KV read)
-	if err := p.updateSubmissionStatus(submission, status, statusNote); err != nil {
+	if err := p.UpdateSubmissionStatus(submission, status, statusNote); err != nil {
 		p.API.LogError("Failed to update submission status", "error", err)
 		return responsef("Error updating submission status. Please try again.")
 	}
 
-	// Format response
 	statusEmoji := getStatusEmoji(status)
-	response := fmt.Sprintf("✅ Updated submission `%s` to %s **%s**", submissionID, statusEmoji, status)
+	response := fmt.Sprintf("Updated submission `%s` to %s **%s**", submissionID, statusEmoji, status)
 	if statusNote != "" {
 		response += fmt.Sprintf("\n**Note:** %s", statusNote)
 	}
@@ -272,8 +250,7 @@ func executeRequestHelp(_ *Plugin, _ *plugin.Context, _ *model.CommandArgs, _ ..
 	return responsef(requestHelpText)
 }
 
-// formatSubmission formats a submission for display
-func formatSubmission(s *Submission, includeUser bool) string {
+func formatSubmission(s *autolink.Submission, includeUser bool) string {
 	statusEmoji := getStatusEmoji(s.Status)
 	submittedTime := time.Unix(s.SubmittedAt, 0).Format("2006-01-02 15:04")
 
@@ -299,25 +276,22 @@ func formatSubmission(s *Submission, includeUser bool) string {
 	return text + "\n"
 }
 
-// getStatusEmoji returns an emoji for the submission status
 func getStatusEmoji(status string) string {
 	switch status {
-	case SubmissionStatusPending:
-		return "⏳"
-	case SubmissionStatusImplemented:
-		return "✅"
-	case SubmissionStatusRejected:
-		return "❌"
+	case autolink.SubmissionStatusPending:
+		return "pending"
+	case autolink.SubmissionStatusImplemented:
+		return "implemented"
+	case autolink.SubmissionStatusRejected:
+		return "rejected"
 	default:
-		return "❓"
+		return "unknown"
 	}
 }
 
-// getAutolinkRequestAutoCompleteData returns autocomplete data for the command
 func getAutolinkRequestAutoCompleteData() *model.AutocompleteData {
 	cmd := model.NewAutocompleteData("autolink-request", "[command]", "Submit and manage autolink pattern requests")
 
-	// User commands
 	submit := model.NewAutocompleteData("submit", "[description]", "Submit a new autolink request")
 	submit.AddTextArgument("Description of the autolink pattern you want to add", "[description]", "")
 	cmd.AddCommand(submit)
@@ -328,7 +302,6 @@ func getAutolinkRequestAutoCompleteData() *model.AutocompleteData {
 	help := model.NewAutocompleteData("help", "", "Show help text")
 	cmd.AddCommand(help)
 
-	// Admin commands
 	admin := model.NewAutocompleteData("admin", "[subcommand]", "Admin commands for managing submissions")
 
 	adminList := model.NewAutocompleteData("list", "[status]", "View all submissions")

@@ -35,7 +35,7 @@ func New() *Plugin {
 }
 
 func (p *Plugin) OnActivate() error {
-	p.handler = api.NewHandler(p, p)
+	p.handler = api.NewHandler(p, p, p)
 
 	// Ensure bot user exists for sending notifications
 	bot := &model.Bot{
