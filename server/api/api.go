@@ -63,6 +63,7 @@ func NewHandler(store Store, authorization Authorization, submissionStore Submis
 	adminAPI.HandleFunc("/links", h.getLinks).Methods("GET")
 	adminAPI.HandleFunc("/link", h.deleteLink).Methods("DELETE")
 	adminAPI.HandleFunc("/submissions/{id}", h.updateSubmission).Methods("PUT")
+	adminAPI.HandleFunc("/links/import", h.importLinks).Methods("POST")
 
 	// User routes (any authenticated user)
 	userAPI := root.PathPrefix("/api/v1").Subrouter()
@@ -479,4 +480,123 @@ func (h *Handler) updateSubmission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.respondJSON(w, submission)
+}
+
+// --- Import endpoint ---
+
+type importLinksResponse struct {
+	Imported int `json:"imported"`
+	Skipped  int `json:"skipped"`
+	Total    int `json:"total"`
+}
+
+func (h *Handler) importLinks(w http.ResponseWriter, r *http.Request) {
+	var raw json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		h.handleErrorWithStatus(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Try to extract links from the JSON. Supports:
+	// 1. A raw array of link objects: [...]
+	// 2. A config object with a "links" key: {"links": [...], ...}
+	// 3. A full Mattermost config with PluginSettings.Plugins.<id>.links
+	var imported []autolink.Autolink
+
+	// First, try as a raw array
+	if err := json.Unmarshal(raw, &imported); err != nil {
+		// Try as an object with a "links" key
+		var wrapper map[string]json.RawMessage
+		if err2 := json.Unmarshal(raw, &wrapper); err2 != nil {
+			h.handleErrorWithStatus(w, http.StatusBadRequest,
+				"JSON must be an array of links or an object with a \"links\" key")
+			return
+		}
+
+		linksRaw, ok := wrapper["links"]
+		if !ok {
+			// Try nested under PluginSettings.Plugins.<pluginId>
+			if ps, found := wrapper["PluginSettings"]; found {
+				var psMap map[string]json.RawMessage
+				if err3 := json.Unmarshal(ps, &psMap); err3 == nil {
+					if plugins, found2 := psMap["Plugins"]; found2 {
+						var pluginsMap map[string]json.RawMessage
+						if err4 := json.Unmarshal(plugins, &pluginsMap); err4 == nil {
+							for _, pluginConf := range pluginsMap {
+								var confMap map[string]json.RawMessage
+								if err5 := json.Unmarshal(pluginConf, &confMap); err5 == nil {
+									if lr, f := confMap["links"]; f {
+										linksRaw = lr
+										ok = true
+										break
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if !ok {
+			h.handleErrorWithStatus(w, http.StatusBadRequest,
+				"no \"links\" array found in the JSON")
+			return
+		}
+
+		if err3 := json.Unmarshal(linksRaw, &imported); err3 != nil {
+			h.handleErrorWithStatus(w, http.StatusBadRequest,
+				"unable to parse links array: "+err3.Error())
+			return
+		}
+	}
+
+	if len(imported) == 0 {
+		h.handleErrorWithStatus(w, http.StatusBadRequest, "no links found in the JSON")
+		return
+	}
+
+	// Merge with existing links, skipping duplicates by Name or Pattern
+	existing := h.store.GetLinks()
+	existingSet := make(map[string]bool)
+	for _, l := range existing {
+		if l.Name != "" {
+			existingSet[l.Name] = true
+		}
+		if l.Pattern != "" {
+			existingSet[l.Pattern] = true
+		}
+	}
+
+	added := 0
+	skipped := 0
+	for _, link := range imported {
+		if link.Pattern == "" {
+			skipped++
+			continue
+		}
+		if (link.Name != "" && existingSet[link.Name]) || existingSet[link.Pattern] {
+			skipped++
+			continue
+		}
+		existing = append(existing, link)
+		if link.Name != "" {
+			existingSet[link.Name] = true
+		}
+		existingSet[link.Pattern] = true
+		added++
+	}
+
+	if added > 0 {
+		if err := h.store.SaveLinks(existing); err != nil {
+			h.handleError(w, errors.Wrap(err, "unable to save imported links"))
+			return
+		}
+	}
+
+	h.respondJSON(w, importLinksResponse{
+		Imported: added,
+		Skipped:  skipped,
+		Total:    len(imported),
+	})
 }

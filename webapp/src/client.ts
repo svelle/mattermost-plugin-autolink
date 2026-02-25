@@ -96,6 +96,13 @@ class Client {
             body: JSON.stringify({status, status_note: statusNote || ''}),
         });
     }
+
+    importLinks(jsonData: string): Promise<{imported: number; skipped: number; total: number}> {
+        return doFetch<{imported: number; skipped: number; total: number}>('/links/import', {
+            method: 'POST',
+            body: jsonData,
+        });
+    }
 }
 
 const client = new Client();

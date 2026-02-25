@@ -117,4 +117,18 @@ export const setEditingLink = (link: Autolink | null) => (dispatch: Dispatch) =>
     dispatch({type: SET_TEST_RESULT, data: null});
 };
 
+export const importLinks = (jsonData: string) => async (dispatch: Dispatch) => {
+    try {
+        const result = await client.importLinks(jsonData);
+        dispatch({type: CLEAR_ERROR});
+        // Refresh links list
+        const links = await client.getLinks();
+        dispatch({type: RECEIVED_LINKS, data: links});
+        return result;
+    } catch (err: any) {
+        dispatch({type: SET_ERROR, data: err.message});
+        return null;
+    }
+};
+
 export const clearError = () => ({type: CLEAR_ERROR});

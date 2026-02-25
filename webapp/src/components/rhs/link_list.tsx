@@ -2,7 +2,7 @@ import React, {useEffect, useState, useCallback} from 'react';
 import {useSelector, useDispatch} from 'react-redux';
 
 import {getLinks, getLinksLoading, getEditingLink} from '../../selectors';
-import {fetchLinks, deleteLink, createOrUpdateLink, setEditingLink} from '../../actions';
+import {fetchLinks, deleteLink, createOrUpdateLink, setEditingLink, importLinks} from '../../actions';
 import {Autolink} from '../../types';
 import Loading from '../common/loading';
 import EmptyState from './empty_state';
@@ -19,6 +19,10 @@ const LinkList: React.FC<Props> = ({theme}) => {
     const editingLink = useSelector(getEditingLink);
     const [filter, setFilter] = useState('');
     const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+    const [showImport, setShowImport] = useState(false);
+    const [importJson, setImportJson] = useState('');
+    const [importResult, setImportResult] = useState<{imported: number; skipped: number; total: number} | null>(null);
+    const [importError, setImportError] = useState<string | null>(null);
 
     useEffect(() => {
         dispatch(fetchLinks() as any);
@@ -52,6 +56,38 @@ const LinkList: React.FC<Props> = ({theme}) => {
         }) as any);
     }, [dispatch]);
 
+    const handleImport = useCallback(async () => {
+        setImportError(null);
+        setImportResult(null);
+
+        if (!importJson.trim()) {
+            setImportError('Please paste JSON content.');
+            return;
+        }
+
+        // Validate JSON locally first
+        try {
+            JSON.parse(importJson);
+        } catch {
+            setImportError('Invalid JSON. Please check the format.');
+            return;
+        }
+
+        const result = await (dispatch(importLinks(importJson) as any) as Promise<{imported: number; skipped: number; total: number} | null>);
+        if (result) {
+            setImportResult(result);
+            setImportJson('');
+            if (result.imported > 0) {
+                setTimeout(() => {
+                    setShowImport(false);
+                    setImportResult(null);
+                }, 3000);
+            }
+        } else {
+            setImportError('Import failed. Check the JSON format and try again.');
+        }
+    }, [dispatch, importJson]);
+
     if (editingLink) {
         return <LinkForm theme={theme}/>;
     }
@@ -64,6 +100,7 @@ const LinkList: React.FC<Props> = ({theme}) => {
     const activeColor = theme?.buttonBg || '#166DE0';
     const dangerColor = theme?.errorTextColor || '#D24B4E';
     const successColor = theme?.onlineIndicator || '#3DB887';
+    const textColor = theme?.centerChannelColor || '#333';
 
     const filteredLinks = filter
         ? links.filter((l) =>
@@ -87,10 +124,29 @@ const LinkList: React.FC<Props> = ({theme}) => {
                         borderRadius: '4px',
                         fontSize: '13px',
                         backgroundColor: 'transparent',
-                        color: theme?.centerChannelColor || '#333',
+                        color: textColor,
                         outline: 'none',
                     }}
                 />
+                <button
+                    onClick={() => {
+                        setShowImport(!showImport);
+                        setImportResult(null);
+                        setImportError(null);
+                    }}
+                    style={{
+                        padding: '6px 10px',
+                        border: `1px solid ${borderColor}`,
+                        borderRadius: '4px',
+                        background: 'none',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        color: activeColor,
+                        whiteSpace: 'nowrap',
+                    }}
+                >
+                    {'Import'}
+                </button>
                 <button
                     onClick={handleAdd}
                     style={{
@@ -105,9 +161,114 @@ const LinkList: React.FC<Props> = ({theme}) => {
                         whiteSpace: 'nowrap',
                     }}
                 >
-                    {'+ Add Link'}
+                    {'+ Add'}
                 </button>
             </div>
+
+            {/* Import panel */}
+            {showImport && (
+                <div style={{
+                    marginBottom: '12px',
+                    padding: '10px',
+                    border: `1px solid ${borderColor}`,
+                    borderRadius: '4px',
+                    backgroundColor: theme?.centerChannelColor ? `${theme.centerChannelColor}04` : '#fafafa',
+                }}>
+                    <label style={{display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px'}}>
+                        {'Import from JSON'}
+                    </label>
+                    <p style={{margin: '0 0 8px', fontSize: '11px', opacity: 0.6}}>
+                        {'Paste a plugin config JSON, or a raw array of link objects. Duplicates will be skipped.'}
+                    </p>
+                    <textarea
+                        value={importJson}
+                        onChange={(e) => {
+                            setImportJson(e.target.value);
+                            setImportError(null);
+                            setImportResult(null);
+                        }}
+                        placeholder='{"links": [...]} or [{"Name": "...", "Pattern": "...", "Template": "..."}]'
+                        rows={6}
+                        style={{
+                            width: '100%',
+                            padding: '6px 10px',
+                            border: `1px solid ${borderColor}`,
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            fontFamily: 'monospace',
+                            backgroundColor: 'transparent',
+                            color: textColor,
+                            outline: 'none',
+                            boxSizing: 'border-box',
+                            resize: 'vertical',
+                            marginBottom: '8px',
+                        }}
+                    />
+                    {importError && (
+                        <div style={{
+                            marginBottom: '8px',
+                            padding: '6px 8px',
+                            borderRadius: '3px',
+                            fontSize: '12px',
+                            color: dangerColor,
+                            backgroundColor: `${dangerColor}15`,
+                        }}>
+                            {importError}
+                        </div>
+                    )}
+                    {importResult && (
+                        <div style={{
+                            marginBottom: '8px',
+                            padding: '6px 8px',
+                            borderRadius: '3px',
+                            fontSize: '12px',
+                            color: successColor,
+                            backgroundColor: `${successColor}15`,
+                        }}>
+                            {`Imported ${importResult.imported} link${importResult.imported !== 1 ? 's' : ''}`}
+                            {importResult.skipped > 0 && `, skipped ${importResult.skipped} duplicate${importResult.skipped !== 1 ? 's' : ''}`}
+                            {'.'}
+                        </div>
+                    )}
+                    <div style={{display: 'flex', gap: '8px'}}>
+                        <button
+                            onClick={handleImport}
+                            disabled={!importJson.trim()}
+                            style={{
+                                padding: '5px 14px',
+                                backgroundColor: importJson.trim() ? activeColor : `${activeColor}50`,
+                                color: theme?.buttonColor || '#fff',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: importJson.trim() ? 'pointer' : 'default',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                            }}
+                        >
+                            {'Import'}
+                        </button>
+                        <button
+                            onClick={() => {
+                                setShowImport(false);
+                                setImportJson('');
+                                setImportResult(null);
+                                setImportError(null);
+                            }}
+                            style={{
+                                padding: '5px 14px',
+                                border: `1px solid ${borderColor}`,
+                                borderRadius: '4px',
+                                background: 'none',
+                                cursor: 'pointer',
+                                fontSize: '12px',
+                                color: textColor,
+                            }}
+                        >
+                            {'Cancel'}
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {filteredLinks.length === 0 ? (
                 <EmptyState
