@@ -9,19 +9,11 @@ import {
     isSubmissionsEnabled as isSubmissionsEnabledSelector,
 } from '../../selectors';
 import {fetchUserRole, setActiveTab, clearError} from '../../actions';
-import {
-    TAB_SUBMIT,
-    TAB_MY_REQUESTS,
-    TAB_MANAGE_LINKS,
-    TAB_REVIEW_REQUESTS,
-} from '../../constants';
+import {TAB_REQUESTS, TAB_LINKS} from '../../constants';
 
 import TabBar, {Tab} from './tab_bar';
 import LinkList from './link_list';
-import LinkForm from './link_form';
-import SubmissionForm from './submission_form';
-import SubmissionList from './submission_list';
-import AdminSubmissions from './admin_submissions';
+import RequestsView from './requests_view';
 
 interface Props {
     theme: any;
@@ -43,18 +35,13 @@ const RHSView: React.FC<Props> = ({theme}) => {
     const tabs = useMemo(() => {
         const t: Tab[] = [];
         if (submissionsEnabled) {
-            t.push({id: TAB_SUBMIT, label: 'Submit Request'});
-            t.push({id: TAB_MY_REQUESTS, label: 'My Requests'});
+            t.push({id: TAB_REQUESTS, label: 'Requests'});
         }
         if (admin) {
-            t.push({id: TAB_MANAGE_LINKS, label: 'Manage Links'});
-            if (submissionsEnabled) {
-                t.push({id: TAB_REVIEW_REQUESTS, label: 'Review Requests'});
-            }
+            t.push({id: TAB_LINKS, label: 'Links'});
         }
-        // If no tabs available (submissions disabled, not admin), show a default
         if (t.length === 0) {
-            t.push({id: TAB_MANAGE_LINKS, label: 'Links'});
+            t.push({id: TAB_LINKS, label: 'Links'});
         }
         return t;
     }, [admin, submissionsEnabled]);
@@ -90,14 +77,10 @@ const RHSView: React.FC<Props> = ({theme}) => {
 
     const renderContent = () => {
         switch (activeTab) {
-        case TAB_SUBMIT:
-            return <SubmissionForm theme={theme}/>;
-        case TAB_MY_REQUESTS:
-            return <SubmissionList theme={theme}/>;
-        case TAB_MANAGE_LINKS:
+        case TAB_REQUESTS:
+            return <RequestsView theme={theme}/>;
+        case TAB_LINKS:
             return <LinkList theme={theme}/>;
-        case TAB_REVIEW_REQUESTS:
-            return <AdminSubmissions theme={theme}/>;
         default:
             return null;
         }
@@ -111,12 +94,14 @@ const RHSView: React.FC<Props> = ({theme}) => {
             backgroundColor: bgColor,
             color: textColor,
         }}>
-            <TabBar
-                tabs={tabs}
-                activeTab={activeTab}
-                onTabChange={handleTabChange}
-                theme={theme}
-            />
+            {tabs.length > 1 && (
+                <TabBar
+                    tabs={tabs}
+                    activeTab={activeTab}
+                    onTabChange={handleTabChange}
+                    theme={theme}
+                />
+            )}
             {error && (
                 <div
                     style={{

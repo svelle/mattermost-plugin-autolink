@@ -13,7 +13,7 @@ import {
     SET_ERROR,
     CLEAR_ERROR,
 } from './action_types';
-import {TAB_SUBMIT} from './constants';
+import {TAB_REQUESTS} from './constants';
 
 function links(state: Autolink[] = [], action: {type: string; data?: Autolink[]}) {
     switch (action.type) {
@@ -60,10 +60,10 @@ function userRole(state: UserRole | null = null, action: {type: string; data?: U
     }
 }
 
-function activeTab(state: string = TAB_SUBMIT, action: {type: string; data?: string}) {
+function activeTab(state: string = TAB_REQUESTS, action: {type: string; data?: string}) {
     switch (action.type) {
     case SET_ACTIVE_TAB:
-        return action.data || TAB_SUBMIT;
+        return action.data || TAB_REQUESTS;
     default:
         return state;
     }
